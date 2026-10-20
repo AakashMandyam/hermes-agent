@@ -531,6 +531,8 @@
     "boot.failure.signedInTitle",
     "boot.failure.title",
     "boot.failure.useLocalGateway",
+    "boot.failure.webappDescription",
+    "boot.failure.webappTitle",
     "boot.ready",
     "boot.steps.connectingGateway",
     "boot.steps.loadingSessions",
