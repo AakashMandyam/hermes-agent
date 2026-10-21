@@ -210,6 +210,39 @@ function Dash() {
   )
 }
 
+function UninstallRow({
+  name,
+  note,
+  disabled,
+  onUninstall
+}: {
+  name: string
+  note: string
+  disabled?: boolean
+  onUninstall: () => void
+}) {
+  const { t } = useI18n()
+  const p = t.skills.plugins
+
+  return (
+    <div className="flex items-center gap-3 border-t border-(--ui-stroke-tertiary) pt-4">
+      <div className="min-w-0 flex-1 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+        {note}
+      </div>
+      <Button
+        aria-label={`${p.uninstall}: ${name}`}
+        className="text-destructive hover:text-destructive"
+        disabled={disabled}
+        onClick={onUninstall}
+        size="xs"
+        variant="text"
+      >
+        {p.uninstall}
+      </Button>
+    </div>
+  )
+}
+
 function PackageRow({
   pkg,
   scope,
@@ -469,22 +502,22 @@ function PackageRow({
 
         {/* Uninstall lives here, not on the card: the card only installs (+)
           and switches. Bundled and pip plugins have no row. */}
-        {((agent && agentRemovable) || (desktop && desktopRemovable)) && (
-          <div className="flex items-center gap-3 border-t border-(--ui-stroke-tertiary) pt-4">
-            <div className="min-w-0 flex-1 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-              {agent && agentRemovable ? p.uninstallTip(pkg.name, scopeLabel) : p.uninstallDesktopTip(pkg.name)}
-            </div>
-            <Button
-              aria-label={`${p.uninstall}: ${pkg.name}`}
-              className="text-destructive hover:text-destructive"
-              disabled={Boolean(agent && agentRemovable && busy)}
-              onClick={() => (agent && agentRemovable ? onAgentRemove(agent) : onDesktopRemove(desktop!))}
-              size="xs"
-              variant="text"
-            >
-              {p.uninstall}
-            </Button>
-          </div>
+        {agent && agentRemovable ? (
+          <UninstallRow
+            disabled={busy}
+            name={pkg.name}
+            note={p.uninstallTip(pkg.name, scopeLabel)}
+            onUninstall={() => onAgentRemove(agent)}
+          />
+        ) : (
+          desktop &&
+          desktopRemovable && (
+            <UninstallRow
+              name={pkg.name}
+              note={p.uninstallDesktopTip(pkg.name)}
+              onUninstall={() => onDesktopRemove(desktop)}
+            />
+          )
         )}
       </div>
     </>
