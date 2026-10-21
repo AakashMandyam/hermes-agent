@@ -15,7 +15,7 @@ import type { ProfileScope } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { DESKTOP_PLUGIN_TOOLSETS } from '@/lib/desktop-toolsets'
 import { triggerHaptic } from '@/lib/haptics'
-import { CheckCircle2, FolderOpen, Loader2, Monitor, Package, RefreshCw, Trash2 } from '@/lib/icons'
+import { CheckCircle2, FolderOpen, Loader2, Monitor, Package, RefreshCw } from '@/lib/icons'
 import { queryClient } from '@/lib/query-client'
 import { cn } from '@/lib/utils'
 import {
@@ -390,37 +390,6 @@ function PackageRow({
               </Tip>
             )}
           </span>
-          {/* Same fixed-slot treatment for Uninstall: present on every row so the
-            halves line up, populated when the agent half is a user install or
-            the row is a standalone desktop plugin. */}
-          <span className="flex size-7 shrink-0 items-center justify-center">
-            {agent && agentRemovable ? (
-              <Tip label={p.uninstallTip(pkg.name, scopeLabel)}>
-                <Button
-                  aria-label={`${p.uninstall}: ${pkg.name}`}
-                  className="text-(--ui-text-tertiary) hover:text-(--ui-danger,#f87171)"
-                  disabled={busy}
-                  onClick={() => onAgentRemove(agent)}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </Tip>
-            ) : desktop && desktopRemovable ? (
-              <Tip label={p.uninstallDesktopTip(pkg.name)}>
-                <Button
-                  aria-label={`${p.uninstall}: ${pkg.name}`}
-                  className="text-(--ui-text-tertiary) hover:text-(--ui-danger,#f87171)"
-                  onClick={() => onDesktopRemove(desktop)}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </Tip>
-            ) : null}
-          </span>
         </div>
 
         {/* The two halves. Desktop is app-level and reads the same whichever
@@ -497,6 +466,26 @@ function PackageRow({
             <Dash />
           )}
         </HalfCell>
+
+        {/* Uninstall lives here, not on the card: the card only installs (+)
+          and switches. Bundled and pip plugins have no row. */}
+        {((agent && agentRemovable) || (desktop && desktopRemovable)) && (
+          <div className="flex items-center gap-3 border-t border-(--ui-stroke-tertiary) pt-4">
+            <div className="min-w-0 flex-1 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+              {agent && agentRemovable ? p.uninstallTip(pkg.name, scopeLabel) : p.uninstallDesktopTip(pkg.name)}
+            </div>
+            <Button
+              aria-label={`${p.uninstall}: ${pkg.name}`}
+              className="text-destructive hover:text-destructive"
+              disabled={Boolean(agent && agentRemovable && busy)}
+              onClick={() => (agent && agentRemovable ? onAgentRemove(agent) : onDesktopRemove(desktop!))}
+              size="xs"
+              variant="text"
+            >
+              {p.uninstall}
+            </Button>
+          </div>
+        )}
       </div>
     </>
   )
@@ -697,7 +686,7 @@ export const PluginsTab = memo(function PluginsTab({
   )
 
   // The card switch turns the whole package on or off, like a skill's; per-half
-  // switches and uninstall (trash + confirm) live in the detail's PackageRow.
+  // switches and Uninstall (with confirm) live in the detail's PackageRow.
   const packageSwitch = (pkg: PluginPackage) => {
     const { agent, desktop } = pkg
 
@@ -742,7 +731,7 @@ export const PluginsTab = memo(function PluginsTab({
       kind="plugins"
       matchInstalled={matchInstalled}
       notice={notice}
-      onInstall={entry => openCatalogPluginInstall(entry, scope)}
+      onInstall={entry => openCatalogPluginInstall(entry, scope, { tier: entry.source })}
       onQueryChange={onQueryChange}
       query={query}
       renderInstalledAction={entry => {

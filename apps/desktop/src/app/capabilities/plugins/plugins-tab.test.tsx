@@ -326,7 +326,7 @@ describe('PluginsTab', () => {
 
     await selectCatalogEntry(weatherEntry.name)
     expect($pluginInstallRequest.get()).toBeNull()
-    fireEvent.click(screen.getByRole('switch', { name: `Add ${weatherEntry.name}` }))
+    fireEvent.click(screen.getByRole('button', { name: `Install ${weatherEntry.name}` }))
 
     expect($pluginInstallRequest.get()).toMatchObject({
       catalogName: weatherEntry.name,
@@ -471,7 +471,7 @@ describe('PluginsTab', () => {
     renderPlugins({ profile: null })
 
     await selectCatalogEntry(entry.name)
-    fireEvent.click(screen.getByRole('switch', { name: `Add ${entry.name}` }))
+    fireEvent.click(screen.getByRole('button', { name: `Install ${entry.name}` }))
 
     expect($pluginInstallRequest.get()).toMatchObject({
       catalogName: entry.name,
