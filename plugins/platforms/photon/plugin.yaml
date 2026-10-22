@@ -91,6 +91,6 @@ optional_env:
     prompt: "Render replies as markdown? (true/false)"
     password: false
   - name: PHOTON_REACTIONS
-    description: "Tapback 👀/👍/👎 on messages as processing status and route tapbacks on bot messages to the agent (true/false, default false)"
+    description: "Legacy fallback for automatic 👀/👍/👎 processing status (default false); prefer platforms.photon.reactions in config.yaml. Inbound tapbacks are independent."
     prompt: "Enable reaction tapbacks? (true/false)"
     password: false

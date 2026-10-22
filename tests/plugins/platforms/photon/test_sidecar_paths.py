@@ -88,6 +88,18 @@ def test_mirror_refresh_updates_changed_files_and_keeps_node_modules(
     assert (mirror / "node_modules" / "installed.txt").exists()
 
 
+@pytest.mark.parametrize("helper", ["send-reply.mjs", "send-format.mjs", "stream-staleness.mjs"])
+def test_readonly_mirror_copies_runtime_helpers(tmp_path, monkeypatch, helper):
+    monkeypatch.delenv("PHOTON_SIDECAR_DIR", raising=False)
+    source = tmp_path / "src"
+    _seed_source(source)
+    # Fixture payloads, not production-source introspection.
+    (source / helper).write_text("fixture payload", encoding="utf-8")
+    _freeze_writability(monkeypatch, writable=False)
+    mirror = sidecar_paths.resolve_sidecar_dir(source)
+    assert (mirror / helper).read_text(encoding="utf-8") == "fixture payload"
+
+
 @pytest.mark.platforms("linux")
 def test_dir_writable_probe(tmp_path) -> None:
     assert sidecar_paths.dir_writable(tmp_path) is True

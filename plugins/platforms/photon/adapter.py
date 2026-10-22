@@ -874,7 +874,8 @@ class PhotonAdapter(BasePlatformAdapter):
             # `[Replying to your previous message: "..."]` when targetText is present.
             await self.handle_message(_event(
                 f"reaction:added:{content.get('emoji') or ''}", reply_to_message_id=target_id,
-                reply_to_text=content.get("targetText") or None, reply_to_is_own_message=True))
+                reply_to_text=content.get("targetText") or None, reply_to_is_own_message=True,
+                reply_anchor_override=target_id or ""))
             return
         # U+FFFC placeholder: wait for the real attachment. Detected before _record_last_inbound
         # so the placeholder isn't the reaction target.
@@ -904,7 +905,8 @@ class PhotonAdapter(BasePlatformAdapter):
             if not choice:
                 logger.debug("[photon] ignoring poll vote with empty title")
                 return
-            await self.handle_message(_event(choice))
+            # The vote id is synthetic; iMessage polls do not support native replies.
+            await self.handle_message(_event(choice, reply_anchor_override=""))
             return
         # Mention gate BEFORE normalising: _normalize_content persists inline attachment
         # bytes to the media cache, and a dropped group message must not leave files behind.
@@ -1257,7 +1259,7 @@ class PhotonAdapter(BasePlatformAdapter):
 
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
                    metadata: Optional[dict[str, Any]] = None) -> SendResult:
-        return await self._sidecar_send(chat_id, self.format_message(content))
+        return await self._sidecar_send(chat_id, self.format_message(content), reply_to=reply_to)
 
     async def send_clarify(self, chat_id: str, question: str, choices: Optional[list], clarify_id: str,
                            session_key: str, metadata: Optional[dict[str, Any]] = None) -> SendResult:
@@ -1286,27 +1288,27 @@ class PhotonAdapter(BasePlatformAdapter):
             local_path = await cache_image_from_url(image_url)
         except Exception:  # couldn't fetch — send the URL as text
             return await super().send_image(chat_id, image_url, caption, reply_to)
-        return await self._sidecar_send_attachment(chat_id, local_path, caption=caption)
+        return await self._sidecar_send_attachment(chat_id, local_path, caption=caption, reply_to=reply_to)
 
     async def send_image_file(self, chat_id: str, image_path: str, caption: Optional[str] = None,
                               reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
                               **kwargs) -> SendResult:
-        return await self._sidecar_send_attachment(chat_id, image_path, caption=caption)
+        return await self._sidecar_send_attachment(chat_id, image_path, caption=caption, reply_to=reply_to)
 
     async def send_voice(self, chat_id: str, audio_path: str, caption: Optional[str] = None,
                          reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
                          **kwargs) -> SendResult:
-        return await self._sidecar_send_attachment(chat_id, audio_path, caption=caption, kind="voice")
+        return await self._sidecar_send_attachment(chat_id, audio_path, caption=caption, kind="voice", reply_to=reply_to)
 
     async def send_video(self, chat_id: str, video_path: str, caption: Optional[str] = None,
                          reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None,
                          **kwargs) -> SendResult:
-        return await self._sidecar_send_attachment(chat_id, video_path, caption=caption)
+        return await self._sidecar_send_attachment(chat_id, video_path, caption=caption, reply_to=reply_to)
 
     async def send_document(self, chat_id: str, file_path: str, caption: Optional[str] = None,
                             file_name: Optional[str] = None, reply_to: Optional[str] = None,
                             metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
-        return await self._sidecar_send_attachment(chat_id, file_path, name=file_name, caption=caption)
+        return await self._sidecar_send_attachment(chat_id, file_path, name=file_name, caption=caption, reply_to=reply_to)
 
     # send_animation: base falls back to send_image (iMessage renders GIFs inline as images).
 
@@ -1331,7 +1333,7 @@ class PhotonAdapter(BasePlatformAdapter):
         await self._sidecar_try("/typing", {"spaceId": chat_id, "state": "stop"}, "stop_typing")
 
     # -- Reactions (tapbacks). Lifecycle hooks (👀 while processing, 👍/👎 on completion)
-    # are opt-in via PHOTON_REACTIONS — noisy on a personal channel.
+    # are opt-in via config.extra.reactions (legacy PHOTON_REACTIONS fallback).
 
     _SENT_IDS_MAX = 1000
     _LAST_INBOUND_CHATS_MAX = 200
@@ -1374,7 +1376,9 @@ class PhotonAdapter(BasePlatformAdapter):
         return True
 
     def _reactions_enabled(self) -> bool:
-        return _get_scoped_secret("PHOTON_REACTIONS", "false").strip().lower() in {"true", "1", "yes", "on"}
+        configured = (self.config.extra or {}).get("reactions")
+        value = configured if configured is not None else _get_scoped_secret("PHOTON_REACTIONS", "false")
+        return str(value).strip().lower() in {"true", "1", "yes", "on"}
 
     async def _add_reaction(self, chat_id: str, message_id: str, emoji: str) -> bool:
         """Tapback ``emoji`` onto a message. Soft-fails (False), never raises."""
@@ -1442,14 +1446,15 @@ class PhotonAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _is_permanent_sidecar_failure(result: SendResult) -> bool:
-        """``auth_or_config`` / ``target_not_allowed`` can't be fixed by retrying or by the
+        """Configuration, authorization, reply-target and no-delivery failures cannot be fixed by the
         plain-text resend — either would just double-send a doomed request.
 
         See #50971.
         """
         raw = result.raw_response
         return (isinstance(raw, dict) and raw.get("retryable") is False
-                and raw.get("error_class") in ("auth_or_config", "target_not_allowed"))
+                and raw.get("error_class") in (
+                    "auth_or_config", "target_not_allowed", "reply_target_unavailable", "message_not_delivered"))
 
     def _send_retry_is_final(self, result: SendResult) -> bool:
         return self._is_permanent_sidecar_failure(result)  # already carries the user-facing explanation
@@ -1458,7 +1463,7 @@ class PhotonAdapter(BasePlatformAdapter):
         """No Markdown banner (replies are markdown or already-stripped plain text); bypass
         richlink() so a rich-link outage doesn't strand a sendable URL."""
         return await self._sidecar_send(
-            chat_id, self.format_message(content)[: self.MAX_MESSAGE_LENGTH], richlink=False, markdown=False)
+            chat_id, self.format_message(content)[: self.MAX_MESSAGE_LENGTH], richlink=False, markdown=False, reply_to=reply_to)
 
     async def _post_send(self, path: str, body: dict[str, Any], *, structured: bool = False,
                          sent_text: Optional[str] = None) -> SendResult:
@@ -1481,13 +1486,16 @@ class PhotonAdapter(BasePlatformAdapter):
         return SendResult(success=True, message_id=data.get("messageId"))
 
     async def _sidecar_send(self, space_id: str, text: str, *, richlink: bool = True,
-                            markdown: bool = True) -> SendResult:
+                            markdown: bool = True, reply_to: Optional[str] = None) -> SendResult:
         sent_text = text
+        reply_to = reply_to if self.config.reply_to_mode != "off" else None
         rich_url = _richlink_candidate(text) if richlink else None
         if rich_url:
-            rich_result = await self._post_send("/send-richlink", {"spaceId": space_id, "url": rich_url},
-                                                sent_text=sent_text)
-            if rich_result.success:
+            rich_body = {"spaceId": space_id, "url": rich_url}
+            if reply_to:
+                rich_body["replyTo"] = reply_to
+            rich_result = await self._post_send("/send-richlink", rich_body, structured=True, sent_text=sent_text)
+            if rich_result.success or self._is_permanent_sidecar_failure(rich_result):
                 return rich_result
             logger.warning("[photon] rich-link send failed, falling back to plain text: %s", rich_result.error)
             markdown = False
@@ -1499,6 +1507,8 @@ class PhotonAdapter(BasePlatformAdapter):
             logger.warning("[photon] truncating outbound from %d to %d chars", len(text), self.MAX_MESSAGE_LENGTH)
             text = text[: self.MAX_MESSAGE_LENGTH]
         body: dict[str, Any] = {"spaceId": space_id, "text": text}
+        if reply_to and self.config.reply_to_mode != "off":
+            body["replyTo"] = reply_to
         if send_markdown:  # key omitted when disabled: pre-`format` sidecars still accept
             body["format"] = "markdown"
         return await self._post_send("/send", body, structured=True, sent_text=sent_text)
@@ -1515,7 +1525,7 @@ class PhotonAdapter(BasePlatformAdapter):
 
     async def _sidecar_send_attachment(self, space_id: str, path: str, *, name: Optional[str] = None,
                                        mime_type: Optional[str] = None, caption: Optional[str] = None,
-                                       kind: str = "attachment") -> SendResult:
+                                       kind: str = "attachment", reply_to: Optional[str] = None) -> SendResult:
         """POST a local file to ``/send-attachment``. ``kind="voice"`` sends audio as a voice
         note (downgrades to a plain audio attachment where unsupported)."""
         safe_path = self.validate_media_delivery_path(str(path))  # send_*_file / cron may pass arbitrary strings
@@ -1523,6 +1533,8 @@ class PhotonAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=f"unsafe or missing attachment path: {path}")
         body = _attachment_body(
             space_id, safe_path, kind=kind, name=name, mime_type=mime_type or _guess_mime(safe_path), caption=caption)
+        if reply_to and self.config.reply_to_mode != "off":
+            body["replyTo"] = reply_to
         label = caption or _attachment_label(kind, name or os.path.basename(safe_path))
         return await self._post_send("/send-attachment", body, structured=True, sent_text=label)
 

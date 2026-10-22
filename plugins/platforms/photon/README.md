@@ -109,6 +109,23 @@ Management metadata lives in `~/.hermes/auth.json` under `credential_pool`:
 
 ## Configuration knobs
 
+Enable automatic processing tapbacks in `config.yaml`:
+
+```yaml
+platforms:
+  photon:
+    reactions: true
+    reply_to_mode: first
+```
+
+Or run `hermes config set platforms.photon.reactions true`. The equivalent
+`gateway.platforms.photon` block is also supported; avoid defining both,
+because the top-level `platforms` block takes precedence. `reactions` defaults
+to false. An explicit YAML true/false overrides the legacy `PHOTON_REACTIONS`
+flag; when omitted, that flag remains a backward-compatible fallback.
+This controls only automatic 👀/👍/👎 status tapbacks, not deliberate agent
+reactions or inbound user tapbacks. Restart the gateway after changing it.
+
 All env vars are documented in `plugin.yaml`. The most important:
 
 | Env var                   | Default                    | Meaning                              |
@@ -125,7 +142,7 @@ All env vars are documented in `plugin.yaml`. The most important:
 | `PHOTON_MAX_INLINE_ATTACHMENT_BYTES` | 20 MB           | Max inbound attachment size the sidecar reads & inlines |
 | `PHOTON_TELEMETRY`        | false                      | Spectrum SDK telemetry — toggle with `hermes photon telemetry on\|off` (restart the gateway to apply) |
 | `PHOTON_MARKDOWN`         | true                       | Send agent replies as markdown (iMessage renders natively). `false` strips formatting to plain text |
-| `PHOTON_REACTIONS`        | false                      | Tapback 👀/👍/👎 as processing status; tapbacks on bot messages reach the agent as `reaction:added:<emoji>` |
+| `PHOTON_REACTIONS`        | false                      | Legacy fallback for automatic 👀/👍/👎 status; prefer `platforms.photon.reactions` in config.yaml |
 
 ## Attachments & limitations
 
@@ -150,13 +167,29 @@ All env vars are documented in `plugin.yaml`. The most important:
   documents are sent via `space.send(attachment(...))` /
   `space.send(voice(...))` through the sidecar's `/send-attachment`
   endpoint; a caption is delivered as a separate text bubble after the media.
+- **Native threaded replies are supported.** An explicit `reply_to` targets
+  that exact message in the destination space through Spectrum's native
+  `reply(...)` builder, including links, attachments, voice notes, and captions.
+  `reply_to_mode` retains the gateway's `first` (default), `all`, and `off`
+  chunk policy. Sends without a target, including proactive notifications,
+  remain top-level; they never implicitly reply to the latest inbound message.
+  Missing, mismatched, or unresolvable targets return a non-retryable failure
+  rather than silently posting a top-level fallback. Membership is checked
+  against native `chatGuids` on the destination's phone, not the SDK's space
+  hint or cached message. An SDK send without a delivered message id is also
+  a non-retryable failure. A caption failure after media delivery is logged
+  without resending the already-delivered media. Responses to user tapbacks
+  thread to the reacted-to native message; unconsumed poll selections receive
+  top-level responses because iMessage polls do not support native replies.
+  Synthetic inbound event ids are preserved for deduplication, not used as
+  native reply targets.
 - **Markdown is rendered.** Replies go out via spectrum-ts' `markdown()`
   builder; iMessage renders bold/italics/lists/code natively and other
   Spectrum platforms degrade to readable plain text. URL-only replies go out
   via spectrum-ts' `richlink()` builder so iMessage can render a native link
   preview card. `PHOTON_MARKDOWN=false` reverts to stripped plain text and
   disables rich-link routing.
-- **Reactions (tapbacks) are supported** behind `PHOTON_REACTIONS` (default
+- **Automatic status tapbacks are supported** behind `platforms.photon.reactions` (default
   off): the adapter tapbacks 👀 while processing and swaps it for 👍/👎 on
   completion, and a user tapback on a bot-sent message is routed to the agent
   as a synthetic `reaction:added:<emoji>` event. Removal after a sidecar
@@ -208,7 +241,10 @@ deliberate:
    are tied to that build's output. `npm install` runs it via `postinstall` and
    fails loudly if the anchors no longer match — update them to the new output
    (`test_spectrum_patch.py` covers the patch).
-5. Run `pytest tests/plugins/platforms/photon/`.
+5. Run `scripts/run_tests.sh tests/plugins/platforms/photon/` and
+   `npm --prefix plugins/platforms/photon/sidecar test` (after `npm ci` in
+   `sidecar/`). The Node tests use the pinned SDK with a fake transport;
+   they do not contact Photon or send real messages.
 6. Verify end-to-end: `hermes photon status`, a DM and a group roundtrip,
    and an agent reply into a group right after a gateway restart (exercises
    `space.get` rehydration).
