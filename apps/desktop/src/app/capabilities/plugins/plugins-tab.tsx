@@ -106,12 +106,22 @@ function installAgentHalfHere(record: PluginRecord, profile: null | string) {
     return
   }
 
+  // The package marker carries no tier, so read it from the cached catalog
+  // (a plugin row's `source` is its tier). Not cached: the dialog keeps the
+  // generic Verified badge.
+  const tier = origin.catalogName
+    ? queryClient
+        .getQueryData<CatalogEntry[]>(['public-catalog', 'plugins'])
+        ?.find(entry => entry.name === origin.catalogName)?.source
+    : undefined
+
   openPluginInstallRequest({
     catalogName: origin.catalogName,
     legacyHint: 'agent',
     profile,
     repo: origin.repo,
-    sha: origin.sha
+    sha: origin.sha,
+    tier
   })
 }
 
@@ -764,6 +774,8 @@ export const PluginsTab = memo(function PluginsTab({
       kind="plugins"
       matchInstalled={matchInstalled}
       notice={notice}
+      // A plugin row's `source` IS its catalog tier (catalog-data.ts::catalogEntry);
+      // CatalogEntry has no `tier` field, so don't "fix" this to entry.tier.
       onInstall={entry => openCatalogPluginInstall(entry, scope, { tier: entry.source })}
       onQueryChange={onQueryChange}
       query={query}

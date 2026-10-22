@@ -297,6 +297,31 @@ describe('PluginsTab', () => {
     })
   })
 
+  it('badges "Install here" with the catalog tier of the package it came from', async () => {
+    seedCatalog([{ ...weatherEntry, name: 'hermes-media-studio', tier: 'official' }])
+    $pluginRecords.set({
+      media: {
+        id: 'media',
+        name: 'Media Studio',
+        kind: 'disk',
+        status: 'loaded',
+        packageName: 'hermes-media-studio',
+        packageOrigin: {
+          catalogName: 'hermes-media-studio',
+          repo: 'https://github.com/NousResearch/hermes-media-studio.git',
+          sha: 'abc'
+        }
+      }
+    })
+
+    renderPlugins({ profile: 'workbot', scopeLabel: 'workbot' })
+    screen.getByRole('button', { name: 'Install here' }).click()
+
+    await waitFor(() => {
+      expect($pluginInstallRequest.get()).toMatchObject({ catalogName: 'hermes-media-studio', tier: 'official' })
+    })
+  })
+
   it('disables "Install here" when the package has no known origin (hand-copied folder)', () => {
     $pluginRecords.set({
       media: { id: 'media', name: 'Media Studio', kind: 'disk', status: 'loaded', packageName: 'hermes-media-studio' }
