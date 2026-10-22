@@ -68,6 +68,9 @@ import { once } from "node:events";
 import { patchSpectrumTs } from "./patch-spectrum-mixed-attachments.mjs";
 import { chooseSendFormat } from "./send-format.mjs";
 import {
+  sendContent, ReplyTargetError, MessageNotDeliveredError, withNativeReplyTargets,
+} from "./send-reply.mjs";
+import {
   classifyProbeRejection,
   createProbeMessageId,
   shouldProbe,
@@ -329,6 +332,7 @@ try {
   process.exit(3);
 }
 
+imessage = await withNativeReplyTargets(imessage.config());
 const app = await Spectrum({
   projectId,
   projectSecret,
@@ -860,6 +864,12 @@ function badRequest(res, msg) {
 }
 
 function classifySidecarError(err) {
+  if (err instanceof ReplyTargetError) {
+    return { errorClass: "reply_target_unavailable", retryable: false };
+  }
+  if (err instanceof MessageNotDeliveredError) {
+    return { errorClass: "message_not_delivered", retryable: false };
+  }
   const message = String(err && err.message ? err.message : err || "");
   const lowered = message.toLowerCase();
 
@@ -1065,7 +1075,7 @@ const server = http.createServer(async (req, res) => {
     }
     const body = await readBody(req);
     if (req.url === "/send") {
-      const { spaceId, text, format = "text" } = body || {};
+      const { spaceId, text, format = "text", replyTo } = body || {};
       if (!spaceId || typeof text !== "string") {
         return badRequest(res, "spaceId and text are required");
       }
@@ -1085,20 +1095,20 @@ const server = http.createServer(async (req, res) => {
         chooseSendFormat(format, text) === "markdown"
           ? spectrumMarkdown(text)
           : spectrumText(text);
-      const result = await space.send(builder);
+      const result = await sendContent(space, builder, replyTo);
       return ok(res, { messageId: result?.id || null });
     }
     if (req.url === "/send-richlink") {
-      const { spaceId, url } = body || {};
+      const { spaceId, url, replyTo } = body || {};
       if (!spaceId || !isHttpUrl(url)) {
         return badRequest(res, "spaceId and http(s) url are required");
       }
       const space = await resolveSpace(spaceId);
-      const result = await space.send(spectrumRichlink(url.trim()));
+      const result = await sendContent(space, spectrumRichlink(url.trim()), replyTo);
       return ok(res, { messageId: result?.id || null });
     }
     if (req.url === "/send-attachment") {
-      const { spaceId, path, name, mimeType, caption, kind } =
+      const { spaceId, path, name, mimeType, caption, kind, replyTo } =
         body || {};
       if (!spaceId || typeof path !== "string" || !path) {
         return badRequest(res, "spaceId and path are required");
@@ -1116,20 +1126,7 @@ const server = http.createServer(async (req, res) => {
           ? voice(path, Object.keys(opts).length ? opts : undefined)
           : attachment(path, Object.keys(opts).length ? opts : undefined);
 
-      const result = await space.send(builder);
-
-      // iMessage delivers the caption as a separate bubble; send it
-      // after the media so the attachment renders first.
-      if (caption && typeof caption === "string") {
-        try {
-          await space.send(spectrumText(caption));
-        } catch (e) {
-          console.error(
-            "photon-sidecar: attachment sent but caption failed: " +
-              (e && e.stack ? e.stack : String(e))
-          );
-        }
-      }
+      const result = await sendContent(space, builder, replyTo, caption);
       return ok(res, { messageId: result?.id || null });
     }
     if (req.url === "/react") {

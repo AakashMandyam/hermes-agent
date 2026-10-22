@@ -74,6 +74,11 @@ def _write_sidecar_fixture(tmp_path: Path, *, sdk_available: bool) -> Path:
                 stop: async () => undefined,
               };
             }
+            export function definePlatform(name, definition) {
+              const platform = () => ({});
+              platform.config = () => ({ __definition: { ...definition, name } });
+              return platform;
+            }
             export const attachment = value => value;
             export const voice = value => value;
             export const text = value => value;
@@ -84,7 +89,8 @@ def _write_sidecar_fixture(tmp_path: Path, *, sdk_available: bool) -> Path:
         encoding="utf-8",
     )
     (package / "providers" / "imessage.js").write_text(
-        "export function imessage() { return {}; }\nimessage.config = () => ({});\n",
+        "export function imessage() { return {}; }\n"
+        "imessage.config = () => ({ __definition: { name: 'imessage', actions: {} } });\n",
         encoding="utf-8",
     )
     return sidecar
